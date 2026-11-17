@@ -51,6 +51,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>PocketFinance can lock itself with Face ID (Settings → This phone).</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PocketFinance looks for your PocketFinance server on your home Wi-Fi so it can connect without typing an address.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

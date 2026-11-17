@@ -120,14 +120,20 @@ async function householdCard(slot) {
   slot.innerHTML = `<div class="card"><h2>👪 Household</h2><p class="small" style="margin-top:0">You're the <span class="pill acc">🛡️ Admin</span> of this PocketFinance — the only one who can add people, change passwords, bank and API keys, and network settings.</p><p class="small muted">Give a partner or family member their own password. <strong>Full</strong> access can edit; <strong>View only</strong> can look but not change anything. Bank keys, passwords and network settings stay yours.</p>
     <form class="form" id="ownF"><label class="f"><span>Your name</span><input name="owner_name" value="${esc(h.owner_name)}" placeholder="e.g. Alex"></label></form>
     <div class="list">${h.members.map(m => `<div class="item mem" style="cursor:default"><div class="ico">${m.role === 'full' ? '✏️' : '👁️'}</div><div class="main"><div class="t">${esc(m.name)} <span class="pill ${m.role === 'full' ? 'acc' : ''}">${m.role === 'full' ? 'Full access' : 'View only'}</span></div>
-      <div class="s">${m.last_login ? 'Last signed in ' + new Date(m.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Has not signed in yet'}</div></div>
-      <button class="btn sm" data-role="${m.id}" data-to="${m.role === 'full' ? 'view' : 'full'}">${m.role === 'full' ? 'Make view only' : 'Give full access'}</button><button class="btn sm danger" data-rm="${m.id}" data-n="${esc(m.name)}">Remove</button></div>`).join('') || '<div class="small muted">Just you so far.</div>'}</div>
+      <div class="s">${m.email ? esc(m.email) + ' · ' : ''}${m.last_login ? 'Last signed in ' + new Date(m.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Has not signed in yet'}</div></div>
+      <button class="btn sm" data-role="${m.id}" data-to="${m.role === 'full' ? 'view' : 'full'}">${m.role === 'full' ? 'Make view only' : 'Give full access'}</button><button class="btn sm" data-email="${m.id}" data-cur="${esc(m.email || '')}" data-n="${esc(m.name)}">✉️ Email</button><button class="btn sm danger" data-rm="${m.id}" data-n="${esc(m.name)}">Remove</button></div>`).join('') || '<div class="small muted">Just you so far.</div>'}</div>
     <form class="form" id="memF" style="margin-top:10px"><div class="two"><input name="name" placeholder="Their name" required maxlength="40"><input name="password" type="password" placeholder="Their password (8+)" required minlength="8" autocomplete="new-password"></div>
+      <input name="email" type="email" placeholder="Their email (optional — lets them reset a forgotten password)" autocomplete="off">
       <div class="row"><select name="role"><option value="view">View only</option><option value="full">Full access</option></select><button class="btn primary">Add person</button></div>
       <p class="small muted" style="margin:0">Everyone signs in on the same page with just their own password, so passwords must all be different.</p></form></div>`;
   $('#ownF input', slot).onchange = e => api('/settings', { method: 'PUT', body: { owner_name: e.target.value } }).then(() => { STATE.user.name = e.target.value.trim() || 'Owner'; setWhoChip(); toast('Saved'); });
   $('#memF', slot).onsubmit = async e => { e.preventDefault(); await run(e.submitter, () => api('/members', { method: 'POST', body: formData(e.target) }), 'Added — they can sign in now'); householdCard(slot); };
   $$('[data-role]', slot).forEach(b => b.onclick = async () => { await api('/members/' + b.dataset.role, { method: 'PATCH', body: { role: b.dataset.to } }); toast('Updated — they will need to sign in again'); householdCard(slot); });
+  $$('[data-email]', slot).forEach(b => b.onclick = async () => {
+    const v = prompt(`Email for ${b.dataset.n} (used for sign-in codes and a forgotten password). Leave empty to remove.`, b.dataset.cur);
+    if (v === null) return;
+    await run(b, () => api('/members/' + b.dataset.email, { method: 'PATCH', body: { email: v.trim() } }), 'Saved'); householdCard(slot);
+  });
   $$('[data-rm]', slot).forEach(b => b.onclick = async () => { if (!confirm(`Remove ${b.dataset.n}? They are signed out right away.`)) return; await api('/members/' + b.dataset.rm, { method: 'DELETE' }); householdCard(slot); });
 }
 // what household members see in Settings
@@ -140,6 +146,6 @@ function memberSettings(el) {
     <div class="card"><h2>💾 Data</h2><div class="row wrap"><a class="btn" href="/api/export/transactions.csv">Export transactions (CSV)</a></div></div></div>`;
   try { $('#theme', el).value = localStorage.getItem('pp-theme') || ''; } catch {}
   $('#theme', el).onchange = e => { const v = e.target.value; if (v) document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; try { v ? localStorage.setItem('pp-theme', v) : localStorage.removeItem('pp-theme'); } catch {} };
-  $('#logout', el).onclick = async () => { await api('/auth/logout', { method: 'POST' }); showAuth(false); };
+  $('#logout', el).onclick = () => signOut();
   connectCard($('#connSlotM', el)).catch(() => {});
 }

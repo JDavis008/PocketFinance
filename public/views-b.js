@@ -355,21 +355,25 @@ VIEWS.settings = async el => {
     <table class="t" style="margin-top:10px"><tbody>${rules.map(r => `<tr><td>If <strong>${r.match_field}</strong> ${r.match_type} “${esc(r.pattern)}”</td><td>${r.set_category ? '→ ' + esc(r.set_category) : ''} ${r.set_merchant ? '· rename “' + esc(r.set_merchant) + '”' : ''} ${r.set_excluded != null ? (r.set_excluded ? '· exclude' : '· include') : ''} ${r.set_tags ? '· ' + tagPills(r.set_tags) : ''}</td><td style="text-align:right"><button class="btn sm danger" data-delrule="${r.id}">✕</button></td></tr>`).join('') || '<tr><td class="muted small">No rules yet.</td></tr>'}</tbody></table></div>
 
   <a class="card ai-card" href="#/advisor"><div class="ai-orb">✨</div><div style="flex:1;min-width:0"><h2 style="margin:0">AI Advisor (Gemini)</h2><div class="small muted">API key, model and "about me" for personalized advice.</div></div><span class="btn sm">Open</span></a>
+  <div id="phoneSlot"></div>
   <div class="card"><h2>📱 Android app</h2><p class="small muted" style="margin-top:0">Install PocketFinance on your phone. It opens this server over Tailscale (turn on the Tailscale app on your phone). Open this page on the phone, tap download, then allow installing from your browser when Android asks.</p>
     <div class="row wrap"><a class="btn primary" href="/api/app.apk" download>Download PocketFinance.apk</a><button class="btn" id="shareApp">📤 Share PocketFinance</button></div>
     <label class="f" style="margin-top:10px"><span>Download link others can use (e.g. Google Drive)</span><input id="appUrl" type="url" value="${esc(s.app_share_url || '')}" placeholder="https://drive.google.com/file/d/…"></label>
     <label class="f"><span>Link to the free Windows server (PocketFinance-Server.exe)</span><input id="srvUrl" type="url" value="${esc(s.server_share_url || '')}" placeholder="https://drive.google.com/file/d/…"></label></div>
   <div class="card"><h2>💾 Your data</h2><div class="row wrap"><a class="btn" href="/api/export/transactions.csv">Export transactions (CSV)</a><a class="btn" href="/api/export/backup.json">Full backup (JSON)</a><button class="btn" id="restoreBtn">Restore from backup…</button><input type="file" id="restoreFile" accept=".json,application/json" class="hidden"></div>
     <p class="small muted">Everything is stored on this computer in <span class="kbd">${esc(s.data_dir || 'the data folder')}</span>. Bank tokens are encrypted (AES-256-GCM).</p>
+    <div id="autoBk"></div>
     <div class="row wrap">${s.demo ? '<button class="btn danger" id="demoClear">Remove demo data</button>' : '<button class="btn" id="demoLoad">Load demo data</button>'}</div></div>
 
   <div id="hcSlot"></div>
   <div id="hhSlot"></div>
+  <div id="emailSlot"></div>
   <div class="card"><h2>🔒 Security &amp; access</h2>
     <form class="form" id="pwF"><div class="two"><input name="current" type="password" placeholder="Current password" required autocomplete="current-password"><input name="password" type="password" placeholder="New password (8+)" required minlength="8" autocomplete="new-password"></div><button class="btn">Change password</button></form>
     <label class="f" style="margin-top:12px"><span>Who can open PocketFinance</span><select id="bind"><option value="127.0.0.1" ${s.bind_host !== '0.0.0.0' ? 'selected' : ''}>Only this computer (and Tailscale serve)</option><option value="0.0.0.0" ${s.bind_host === '0.0.0.0' ? 'selected' : ''}>Devices on my home network too</option></select></label>
     <p class="small muted">Changing this restarts the server (takes a few seconds). For your phone away from home, use Tailscale.</p>
     <div class="row wrap"><label class="f"><span>Theme</span><select id="theme"><option value="">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+    <div id="devSlot"></div>
     <button class="btn" id="logout" style="margin-top:10px">Sign out</button></div>
   </div>`;
   const reload = () => route();
@@ -378,6 +382,10 @@ VIEWS.settings = async el => {
   homeSettingsCard($('#hcSlot', el)).catch(() => {});
   connectCard($('#connSlot', el)).then(() => { if (new URLSearchParams(location.hash.split('?')[1] || '').get('connect')) $('#connSlot', el).scrollIntoView(); }).catch(() => {});
   wireRestore(el);
+  autoBackupCard($('#autoBk', el)).catch(() => {});
+  devicesCard($('#devSlot', el)).catch(() => {});
+  emailCard($('#emailSlot', el)).catch(() => {});
+  phoneCard($('#phoneSlot', el));
   householdCard($('#hhSlot', el)).catch(e => { $('#hhSlot', el).innerHTML = `<div class="card small muted">${esc(e.message)}</div>`; });
   if ($('#sbx', el)) $('#sbx', el).onclick = async e => { await run(e.target, () => api('/plaid/sandbox', { method: 'POST' }), 'Sandbox bank connected'); STATE.accounts = (await api('/accounts')).accounts; location.hash = '#/accounts'; };
   $('#syncH', el).onchange = e => api('/settings', { method: 'PUT', body: { sync_hours: Number(e.target.value) } }).then(() => toast('Saved'));
@@ -394,7 +402,7 @@ VIEWS.settings = async el => {
   $('#bind', el).onchange = async e => { await api('/settings', { method: 'PUT', body: { bind_host: e.target.value } }); toast('Saved — PocketFinance is restarting on the new address'); };
   try { $('#theme', el).value = localStorage.getItem('pp-theme') || ''; } catch {}
   $('#theme', el).onchange = e => { const v = e.target.value; if (v) document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; try { v ? localStorage.setItem('pp-theme', v) : localStorage.removeItem('pp-theme'); } catch {} };
-  $('#logout', el).onclick = async () => { await api('/auth/logout', { method: 'POST' }); showAuth(false); };
+  $('#logout', el).onclick = () => signOut();
   $('#shareApp', el).onclick = () => shareApp();
   $('#srvUrl', el).onchange = e => api('/settings', { method: 'PUT', body: { server_share_url: e.target.value } }).then(() => toast('Link saved'), err => toast(err.message));
   $('#appUrl', el).onchange = e => api('/settings', { method: 'PUT', body: { app_share_url: e.target.value } }).then(() => toast('Link saved'), err => toast(err.message));

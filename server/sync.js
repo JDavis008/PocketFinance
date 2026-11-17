@@ -48,6 +48,7 @@ async function syncAll() {
 
 function startSchedule() {
   const tick = async () => {
+    try { const b = require('./autobackup').run(); if (b) console.log('automatic backup saved', b); } catch (e) { console.error('automatic backup failed', e.message); }
     const hours = Number(getSetting('sync_hours', 6)) || 6;
     const last = Number(getSetting('last_auto_sync', 0)) || 0;
     if (Date.now() - last >= hours * 3600e3) {

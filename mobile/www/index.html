@@ -43,6 +43,7 @@
       <label for="url">Server address</label>
       <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.20:48140">
       <button id="retry">Connect</button>
+      <button id="search" class="ghost hidden">Search my Wi-Fi again</button>
       <button id="open" class="ghost hidden">Open it anyway</button>
       <details><summary>Can't connect?</summary><ul>
         <li>Your PC is on and PocketFinance Server is running (it starts when you sign in to Windows).</li>
@@ -87,34 +88,45 @@
     return found;
   }
   const open = url => { $('msg').textContent = 'Opening…'; location.replace(url + '/#/dashboard'); };
+  // the connect form: after a failed connect, or when "Use a different server" was picked inside the app (?pick=1)
+  let picking = new URLSearchParams(location.search).has('pick');
+  function showForm(note) {
+    const known = !!saved(), url = clean(getUrl());
+    $('title').textContent = picking ? 'Change server' : known ? "Can't reach your PocketFinance" : 'Connect to your PocketFinance';
+    $('title').className = !picking && known ? 'err' : 'ok';
+    if (note) $('title').textContent = note;
+    $('url').value = known ? url : '';
+    // plain-http home addresses can't always be checked from here; let the person open them directly
+    $('open').classList.toggle('hidden', picking || !(known && /^http:\/\//i.test(url)));
+    $('reset').classList.toggle('hidden', !known || !DEFAULT_URL || url === DEFAULT_URL);
+    $('search').classList.toggle('hidden', !window.PocketFinanceApp?.localIps);
+    $('loading').classList.add('hidden'); $('fail').classList.remove('hidden');
+  }
   async function go() {
-    const url = clean(getUrl());
     $('fail').classList.add('hidden'); $('loading').classList.remove('hidden'); $('msg').textContent = 'Connecting to your PocketFinance…';
     // the last server that worked (or your own default address), then a search of this Wi-Fi
     const tries = [...new Set([saved(), DEFAULT_URL].filter(Boolean).map(clean))];
     for (const u of tries) {
       for (let i = 0; i < (u === clean(saved()) ? 2 : 1); i++) {
-        if (await reachable(u, u === clean(saved()) ? 9000 : 5000)) return open(u);
+        if (await reachable(u, u === clean(saved()) ? 9000 : 5000)) { if (u !== clean(saved())) setUrl(u); return open(u); }
         $('msg').textContent = 'Still trying…';
       }
     }
-    $('msg').textContent = 'Looking for PocketFinance on your Wi-Fi…';
-    const found = await searchWifi();
-    if (found) { setUrl(found); return open(found); }
-    const known = !!saved();
-    $('title').textContent = known ? "Can't reach your PocketFinance" : 'Connect to your PocketFinance';
-    $('title').className = known ? 'err' : 'ok';
-    $('url').value = known ? url : '';
-    // plain-http home addresses can't always be checked from here; let the person open them directly
-    $('open').classList.toggle('hidden', !(known && /^http:\/\//i.test(url)));
-    $('reset').classList.toggle('hidden', !known || !DEFAULT_URL || url === DEFAULT_URL);
-    $('loading').classList.add('hidden'); $('fail').classList.remove('hidden');
+    if (await wifi()) return;
+    showForm();
   }
-  $('retry').onclick = () => { const u = clean($('url').value); if (!u) return $('url').focus(); setUrl(u); go(); };
+  async function wifi() {
+    $('fail').classList.add('hidden'); $('loading').classList.remove('hidden'); $('msg').textContent = 'Looking for PocketFinance on your Wi-Fi…';
+    const found = await searchWifi();
+    if (found) { setUrl(found); open(found); return true; }
+    return false;
+  }
+  $('retry').onclick = () => { const u = clean($('url').value); if (!u) return $('url').focus(); picking = false; setUrl(u); go(); };
+  $('search').onclick = async () => { picking = false; if (!(await wifi())) showForm('No PocketFinance found on this Wi-Fi'); };
   $('open').onclick = () => location.replace(clean(getUrl()) + '/#/dashboard');
-  $('reset').onclick = () => { setUrl(DEFAULT_URL); $('url').value = DEFAULT_URL; go(); };
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('fail').classList.contains('hidden')) go(); });
-  go();
+  $('reset').onclick = () => { picking = false; setUrl(DEFAULT_URL); $('url').value = DEFAULT_URL; go(); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !picking && !$('fail').classList.contains('hidden')) go(); });
+  if (picking) showForm(); else go();
 </script>
 </body>
 </html>

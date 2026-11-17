@@ -22,7 +22,20 @@
     <input id="authPw" type="password" autocomplete="current-password" placeholder="Password" required minlength="8">
     <input id="authPw2" type="password" autocomplete="new-password" placeholder="Confirm password" class="hidden" minlength="8">
     <button class="btn primary" type="submit" id="authBtn">Sign in</button>
+    <input id="authEmail" type="email" placeholder="Your email (optional — for a forgotten password)" autocomplete="email" class="hidden">
     <p class="err" id="authErr"></p>
+    <div class="auth-links" id="authLinks"><button type="button" class="linkish" id="forgotBtn">Forgot password?</button><button type="button" class="linkish" id="codeLink">Email me a sign-in code</button></div>
+  </form>
+  <form id="codeForm" class="auth-card hidden" novalidate>
+    <div class="brand big"><img src="/icon.svg" alt=""><span>PocketFinance</span></div>
+    <p id="codeMsg" class="muted"></p>
+    <input id="codeEmail" type="email" placeholder="Email address" autocomplete="email">
+    <input id="codeNum" class="hidden" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code">
+    <input id="codePw" class="hidden" type="password" placeholder="New password (8+ characters)" autocomplete="new-password">
+    <input id="codePw2" class="hidden" type="password" placeholder="New password again" autocomplete="new-password">
+    <button class="btn primary" type="submit" id="codeGo">Email me a code</button>
+    <p class="err" id="codeErr"></p>
+    <div class="auth-links"><button type="button" class="linkish" id="codeAgain" hidden>Send a new code</button><button type="button" class="linkish" id="codeBack">Back to password sign-in</button></div>
   </form>
 </div>
 

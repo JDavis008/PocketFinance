@@ -145,3 +145,99 @@ function wireRestore(el) {
     if (r) location.hash = '#/dashboard';
   };
 }
+
+// ---------- Settings → Your data: automatic daily backups (owner only) ----------
+async function autoBackupCard(el) {
+  if (!el || STATE.user.role !== 'owner') return;
+  const draw = d => {
+    const when = b => new Date(b.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    el.innerHTML = `<h3 style="font-size:15px;margin:16px 0 4px">🗓️ Automatic backups</h3>
+      <p class="small muted" style="margin:0 0 8px">PocketFinance saves a full backup every day and keeps the newest ${d.keep}. Restoring one saves a copy of what's here now first.</p>
+      ${d.auto.length ? `<table class="t"><tbody>${d.auto.slice(0, 7).map(b => `<tr><td>${esc(when(b))}</td><td class="muted small">${Math.max(1, Math.round(b.size / 1024)).toLocaleString()} KB</td>
+        <td style="text-align:right;white-space:nowrap"><a class="btn sm" href="/api/backups/${encodeURIComponent(b.name)}" download>Download</a> <button class="btn sm" data-bkrestore="${esc(b.name)}">Restore</button></td></tr>`).join('')}</tbody></table>
+        ${d.auto.length > 7 ? `<p class="small muted">+ ${d.auto.length - 7} older</p>` : ''}` : '<p class="small muted">No automatic backups yet — the first one is saved once you have accounts or transactions.</p>'}
+      <button class="btn sm" id="bkNow" style="margin-top:8px">Back up now</button>`;
+    $('#bkNow', el).onclick = async e => { const r = await run(e.target, () => api('/backups/run', { method: 'POST' }), 'Backup saved'); if (r) draw({ ...d, auto: r.auto }); };
+    el.querySelectorAll('[data-bkrestore]').forEach(b => b.onclick = async () => {
+      const name = b.dataset.bkrestore, item = d.auto.find(x => x.name === name);
+      if (!confirm(`Go back to your data as it was on ${when(item)}?\n\nAnything added or changed since then is replaced. A copy of what's here now is saved first (data\backups).`)) return;
+      const r = await run(b, () => api(`/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }), r => `Restored ${r.counts.accounts || 0} accounts and ${(r.counts.transactions || 0).toLocaleString()} transactions`);
+      await loadCats(true); STATE.accounts = (await api('/accounts')).accounts; refreshBell();
+      if (r) location.hash = '#/dashboard';
+    });
+  };
+  draw(await api('/backups'));
+}
+
+// ---------- Settings → This phone (only inside the PocketFinance phone app) ----------
+function phoneCard(el) {
+  const app = window.PocketFinanceApp;
+  if (!el || !app || typeof app.switchServer !== 'function') return;
+  const canLock = typeof app.lockAvailable === 'function' && !!app.lockAvailable();
+  el.innerHTML = `<div class="card"><h2>📲 This phone</h2>
+    ${canLock ? `<label class="row" style="gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="appLock" ${app.getLock() ? 'checked' : ''} style="width:20px;height:20px">
+      <span><strong>Lock with fingerprint, face or PIN</strong><br><span class="small muted">Asks when you open PocketFinance, and again after a minute away.</span></span></label>
+      <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="lockNow" ${app.getLock() ? '' : 'disabled'}>Lock now</button></div>`
+      : '<p class="small muted" style="margin-top:0">Set up a fingerprint, face or screen lock on this phone to lock PocketFinance with it.</p>'}
+    <p class="small muted" style="margin:14px 0 6px">Connected to <span class="kbd">${esc(location.origin)}</span></p>
+    <button class="btn" id="switchSrv">Use a different server…</button>
+    ${typeof app.version === 'function' ? `<p class="small muted" style="margin-bottom:0">App version ${esc(app.version())}</p>` : ''}</div>`;
+  const lock = $('#appLock', el);
+  if (lock) lock.onchange = () => { app.setLock(lock.checked); $('#lockNow', el).disabled = !lock.checked; toast(lock.checked ? 'PocketFinance will ask for your fingerprint, face or PIN' : 'Lock turned off'); };
+  if ($('#lockNow', el)) $('#lockNow', el).onclick = () => app.lockNow();
+  $('#switchSrv', el).onclick = () => app.switchServer();
+}
+
+// ---------- Settings → Security: phones that sign in automatically (owner only) ----------
+async function devicesCard(el) {
+  if (!el || STATE.user.role !== 'owner') return;
+  const { devices } = await api('/devices');
+  if (!devices.length) { el.innerHTML = ''; return; }
+  const day = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  el.innerHTML = `<h3 style="font-size:15px;margin:16px 0 4px">📲 Phones that sign in automatically</h3>
+    <p class="small muted" style="margin:0 0 8px">The PocketFinance app remembers the phone after a password sign-in. Remove one to make it ask for the password again. Changing your password removes them all.</p>
+    <table class="t"><tbody>${devices.map(d => `<tr><td><strong>${esc(d.name || 'Phone')}</strong><div class="small muted">${d.member ? esc(d.member) : 'You'} · last used ${day(d.last_used)}</div></td>
+      <td style="text-align:right"><button class="btn sm danger" data-deldev="${d.id}">Remove</button></td></tr>`).join('')}</tbody></table>`;
+  el.querySelectorAll('[data-deldev]').forEach(b => b.onclick = async () => {
+    await run(b, () => api(`/devices/${b.dataset.deldev}`, { method: 'DELETE' }), 'Removed — that phone will ask for the password next time');
+    devicesCard(el);
+  });
+}
+
+// ---------- Settings → Email: your address for codes + the account PocketFinance sends from (owner only) ----------
+const MAIL_PRESETS = {
+  gmail: { label: 'Gmail', host: 'smtp.gmail.com', port: 465, help: 'Turn on 2-Step Verification, then create an app password at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> and paste it here (not your normal Gmail password).' },
+  outlook: { label: 'Outlook / Hotmail', host: 'smtp-mail.outlook.com', port: 587, help: 'Use your Outlook address. If sign-in is refused, create an app password at account.microsoft.com → Security.' },
+  icloud: { label: 'iCloud Mail', host: 'smtp.mail.me.com', port: 587, help: 'Create an app-specific password at <a href="https://account.apple.com" target="_blank" rel="noopener">account.apple.com</a> → Sign-In and Security.' },
+  yahoo: { label: 'Yahoo', host: 'smtp.mail.yahoo.com', port: 465, help: 'Create an app password in Yahoo Account Security.' },
+  other: { label: 'Other', host: '', port: 465, help: 'Your provider lists its SMTP server and port (465 or 587).' },
+};
+async function emailCard(el) {
+  if (!el || STATE.user.role !== 'owner') return;
+  const st = await api('/settings/email');
+  const preset = Object.keys(MAIL_PRESETS).find(k => k !== 'other' && MAIL_PRESETS[k].host === st.host) || (st.host ? 'other' : 'gmail');
+  el.innerHTML = `<div class="card"><h2>✉️ Email sign-in &amp; forgot password</h2>
+    <p class="small muted" style="margin-top:0">With an email address on your account, the sign-in page can email you a 6-digit code to sign in or set a new password. Household members can have one too (Settings → Household).</p>
+    <form class="form" id="ownEmailF"><label class="f"><span>Your email</span><input name="owner_email" type="email" value="${esc(st.owner_email || '')}" placeholder="you@example.com" autocomplete="email"></label><button class="btn sm">Save</button></form>
+    <h3 style="font-size:15px;margin:16px 0 4px">Send codes from</h3>
+    <p class="small muted" style="margin:0 0 8px">PocketFinance sends the codes through an email account of yours. ${st.configured ? '<span class="pill acc">✓ Set up</span>' : '<strong>Not set up yet.</strong>'}</p>
+    <form class="form" id="smtpF">
+      <div class="two"><label class="f"><span>Email provider</span><select name="preset">${Object.entries(MAIL_PRESETS).map(([k, p]) => `<option value="${k}" ${k === preset ? 'selected' : ''}>${p.label}</option>`).join('')}</select></label>
+        <label class="f"><span>Email account</span><input name="user" type="email" value="${esc(st.user || '')}" placeholder="you@gmail.com" autocomplete="off"></label></div>
+      <div class="two"><label class="f"><span>App password</span><input name="pass" type="password" placeholder="${st.has_password ? 'Saved — paste a new one to replace' : 'Paste the app password'}" autocomplete="new-password"></label>
+        <div class="two"><label class="f"><span>Server</span><input name="host" value="${esc(st.host || MAIL_PRESETS[preset].host)}"></label><label class="f"><span>Port</span><input name="port" type="number" value="${st.port || MAIL_PRESETS[preset].port}"></label></div></div>
+      <p class="small muted" id="smtpHelp" style="margin:0">${MAIL_PRESETS[preset].help}</p>
+      <div class="row wrap"><button class="btn primary">Save email account</button><button type="button" class="btn" id="smtpTest">Send me a test email</button></div>
+    </form></div>`;
+  const f = $('#smtpF', el);
+  f.preset.onchange = () => { const p = MAIL_PRESETS[f.preset.value]; if (p.host) { f.host.value = p.host; f.port.value = p.port; } $('#smtpHelp', el).innerHTML = p.help; };
+  $('#ownEmailF', el).onsubmit = async e => { e.preventDefault(); await run(e.submitter, () => api('/settings/email', { method: 'PUT', body: { owner_email: e.target.owner_email.value } }), 'Saved'); };
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const d = formData(f); delete d.preset;
+    if (!d.pass) delete d.pass;
+    await run(e.submitter, () => api('/settings/email', { method: 'PUT', body: { smtp: d } }), 'Email account saved');
+    emailCard(el);
+  };
+  $('#smtpTest', el).onclick = e => run(e.target, () => api('/settings/email/test', { method: 'POST' }), r => `Test email sent to ${r.sent}`).catch(() => {});
+}

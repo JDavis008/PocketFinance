@@ -26,6 +26,8 @@ const demo = require('./demo');
 const ious = require('./ious');
 const family = require('./family');
 const restore = require('./restore');
+const autobackup = require('./autobackup');
+const emailauth = require('./emailauth');
 const { today, addDays, monthOf, round2 } = require('./util');
 
 // ROOT holds public/, node_modules/ (vendor files) and dist/ (the APK). The packaged exe points it at its install folder.
@@ -51,12 +53,13 @@ const ip = req => req.socket.remoteAddress || '';
 
 // ---------- auth ----------
 // Lets the phone app find this server on the Wi-Fi (readable cross-origin; says nothing about the data).
-app.get('/api/hello', (req, res) => { res.set('Access-Control-Allow-Origin', '*'); res.json({ app: 'PocketFinance' }); });
+app.get('/api/hello', (req, res) => { res.set('Access-Control-Allow-Origin', '*'); res.json({ app: 'PocketFinance', id: sec.installId() }); });
 app.get('/api/auth/status', (req, res) => { const u = sec.sessionUser(req); res.json({ setup: sec.isSetUp(), authed: !!u, user: u ? { name: u.name, role: u.role } : null }); });
 app.post('/api/auth/setup', wrap((req, res) => {
   if (sec.isSetUp()) throw bad('Already set up.');
   const pw = String(req.body.password || '');
   if (pw.length < 8) throw bad('Use at least 8 characters.');
+  if (req.body.email) emailauth.setOwnerEmail(req.body.email); // optional: for a forgotten password
   sec.setPassword(pw); sec.createSession(res);
 }));
 app.post('/api/auth/login', wrap((req, res) => {
@@ -65,7 +68,22 @@ app.post('/api/auth/login', wrap((req, res) => {
   if (!who) { sec.noteFail(ip(req)); throw Object.assign(new Error('Wrong password.'), { status: 401 }); }
   sec.clearFails(ip(req)); sec.createSession(res, who.memberId);
 }));
-app.post('/api/auth/logout', wrap((req, res) => sec.destroySession(req, res)));
+app.post('/api/auth/logout', wrap((req, res) => { sec.forgetDeviceToken(req.body.device_token); sec.destroySession(req, res); }));
+// "Forgot password" and email sign-in: a 6-digit code goes to the address on the account
+app.post('/api/auth/email-code', wrap(async req => {
+  if (sec.throttled(ip(req))) throw bad('Too many attempts. Wait 5 minutes.');
+  return emailauth.requestCode(req.body.email, req.body.purpose);
+}));
+app.post('/api/auth/email-login', wrap((req, res) => {
+  if (sec.throttled(ip(req))) throw bad('Too many attempts. Wait 5 minutes.');
+  try { const r = emailauth.useCode(res, req.body.email, req.body.code, req.body.password); sec.clearFails(ip(req)); return r; }
+  catch (e) { if (e.status === 401) sec.noteFail(ip(req)); throw e; }
+}));
+// the phone app signs itself in with the device key it got after your last password sign-in
+app.post('/api/auth/device-login', wrap((req, res) => {
+  if (sec.throttled(ip(req))) throw bad('Too many attempts. Wait 5 minutes.');
+  if (!sec.deviceLogin(res, req.body.token)) { sec.noteFail(ip(req)); throw Object.assign(new Error('This phone needs to sign in again.'), { status: 401 }); }
+}));
 
 // read-only bills calendar feed (token in URL so calendar apps can subscribe)
 app.get('/cal/:token/bills.ics', (req, res) => {
@@ -74,6 +92,22 @@ app.get('/cal/:token/bills.ics', (req, res) => {
 });
 
 app.use('/api', sec.requireAuth);
+// remember this phone (called by the PocketFinance app right after a password sign-in)
+app.post('/api/auth/device', wrap(req => sec.rememberDevice(req.user, req.body.name)));
+// email used for sign-in codes (owner) + the owner's outgoing mail account (SMTP)
+app.get('/api/settings/email', sec.ownerOnly, wrap(() => emailauth.smtpStatus()));
+app.put('/api/settings/email', sec.ownerOnly, wrap(req => {
+  if (req.body.owner_email !== undefined) emailauth.setOwnerEmail(req.body.owner_email);
+  if (req.body.smtp) emailauth.saveSmtp(req.body.smtp);
+  return emailauth.smtpStatus();
+}));
+app.post('/api/settings/email/test', sec.ownerOnly, wrap(async () => {
+  const to = emailauth.ownerEmail(); if (!to) throw bad('Add your email address first.');
+  await emailauth.sendMail(to, 'PocketFinance email works', "This is a test from PocketFinance. Sign-in codes and \"Forgot password\" will come from this address.\n\n— PocketFinance");
+  return { sent: to };
+}));
+app.get('/api/devices', sec.ownerOnly, wrap(() => ({ devices: sec.listDevices() })));
+app.delete('/api/devices/:id', sec.ownerOnly, wrap(req => { sec.removeDevice(Number(req.params.id)); }));
 
 app.post('/api/auth/password', sec.ownerOnly, wrap((req, res) => {
   if (!sec.checkPassword(String(req.body.current || ''), getSetting('auth_hash'))) throw bad('Current password is wrong.');
@@ -401,8 +435,8 @@ app.put('/api/homes-settings', sec.ownerOnly, wrap(req => homes.saveSettings(req
 
 // ---------- household members (owner only) ----------
 app.get('/api/members', sec.ownerOnly, wrap(() => ({ members: sec.listMembers(), owner_name: getSetting('owner_name', '') || '' })));
-app.post('/api/members', sec.ownerOnly, wrap(req => sec.addMember(req.body || {})));
-app.patch('/api/members/:id', sec.ownerOnly, wrap(req => sec.updateMember(Number(req.params.id), req.body || {})));
+app.post('/api/members', sec.ownerOnly, wrap(req => { const r = sec.addMember(req.body || {}); if (req.body.email) { try { emailauth.setMemberEmail(r.id, req.body.email); } catch (e) { sec.removeMember(r.id); throw e; } } return r; }));
+app.patch('/api/members/:id', sec.ownerOnly, wrap(req => { const id = Number(req.params.id); if (req.body.email !== undefined) emailauth.setMemberEmail(id, req.body.email); const { email, ...rest } = req.body || {}; if (Object.keys(rest).length) sec.updateMember(id, rest); }));
 app.delete('/api/members/:id', sec.ownerOnly, wrap(req => sec.removeMember(Number(req.params.id))));
 app.get('/api/plans/debt', wrap(req => plans.debtPlan(req.query.extra != null || req.query.strategy ? req.query : null)));
 app.put('/api/plans/debt', wrap(req => { plans.saveDebtPlan(req.body || {}); return plans.debtPlan(); }));
@@ -525,8 +559,16 @@ app.post('/api/chores/:id/done', wrap(req => family.choreDone(Number(req.params.
 app.post('/api/chores/:id/undo', wrap(req => family.choreUndo(Number(req.params.id))));
 app.get('/api/family/checkin', wrap(req => family.checkin(req.query.month, { insights, recurring })));
 app.put('/api/family/notes/:month', wrap(req => family.saveNotes(req.params.month, (req.body || {}).notes)));
-// restore a Full backup (JSON); owner only, keeps a copy of the current database in dataackups
+// restore a Full backup (JSON); owner only, keeps a copy of the current database in data/backups
 app.post('/api/restore', sec.ownerOnly, wrap(req => { const r = restore.restore(req.body); sync.afterSync(); return r; }));
+// automatic daily backups (data/backups/auto-YYYY-MM-DD.json): list, back up now, download, restore
+app.get('/api/backups', sec.ownerOnly, wrap(() => ({ auto: autobackup.list(), keep: autobackup.KEEP, folder: autobackup.DIR })));
+app.post('/api/backups/run', sec.ownerOnly, wrap(() => ({ name: autobackup.run(true), auto: autobackup.list() })));
+app.get('/api/backups/:name', sec.ownerOnly, (req, res) => {
+  let f; try { f = autobackup.file(req.params.name); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  res.download(f, `pocketfinance-${req.params.name}`);
+});
+app.post('/api/backups/:name/restore', sec.ownerOnly, wrap(req => { const r = restore.restore(autobackup.read(req.params.name)); sync.afterSync(); return r; }));
 
 app.post('/api/demo/load', wrap(() => { demo.load(); sync.afterSync(); }));
 app.post('/api/demo/clear', wrap(() => { demo.clear(); }));
@@ -539,9 +581,7 @@ app.get('/api/export/transactions.csv', (req, res) => {
   res.type('text/csv').setHeader('Content-Disposition', `attachment; filename="pocketpilot-transactions-${today()}.csv"`).send(out.join('\n'));
 });
 app.get('/api/export/backup.json', (req, res) => {
-  const t = ['accounts', 'balance_history', 'transactions', 'categories', 'rules', 'budgets', 'recurring', 'goals', 'goal_events', 'credit_scores', 'negotiations', 'attachments', 'watchlists', 'ious', 'kids', 'kid_chores', 'kid_ledger', 'family_notes'];
-  const data = Object.fromEntries(t.map(n => [n, db.prepare(`SELECT * FROM ${n}`).all()]));
-  res.setHeader('Content-Disposition', `attachment; filename="pocketpilot-backup-${today()}.json"`); res.json({ version: 1, exported: new Date().toISOString(), ...data });
+  res.setHeader('Content-Disposition', `attachment; filename="pocketfinance-backup-${today()}.json"`); res.json(autobackup.snapshot());
 });
 
 // ---------- AI advisor (Gemini) ----------

@@ -520,3 +520,9 @@ a.card.kpi:active, a.card.ai-card:active, a.hero:active { transform: translateY(
   .top { padding-top: max(10px, calc(6px + env(safe-area-inset-top))); }
   .side { padding-top: env(safe-area-inset-top); }
 }
+
+/* sign-in screen: forgot password / email code links */
+.auth-links { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 14px; }
+.linkish { background: none; border: 0; padding: 4px 2px; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; box-shadow: none; }
+.linkish:hover { filter: brightness(1.15); }
+#codeForm input, .auth-card input { width: 100%; }

@@ -30,9 +30,12 @@ const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(
 const catIcon = name => (STATE.cats.find(c => c.name === name) || {}).icon || '🏷️';
 const catColor = name => (STATE.cats.find(c => c.name === name) || {}).color || '#94a3b8';
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body } = {}, retried = false) {
   const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json', 'X-PP': '1' }, body: body ? JSON.stringify(body) : undefined });
-  if (res.status === 401 && !path.startsWith('/auth')) { showAuth(); throw new Error('Signed out'); }
+  if (res.status === 401 && !path.startsWith('/auth')) {
+    if (!retried && await autoLogin()) return api(path, { method, body }, true); // the phone app signs itself back in
+    showAuth(); throw new Error('Signed out');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -108,23 +111,110 @@ function md(src) {
 const formData = form => Object.fromEntries(new FormData(form).entries());
 
 // ---------- auth ----------
+// Inside the PocketFinance phone app: a device key (kept by the app, one per server) signs you in automatically.
+const PFAPP = window.PocketFinanceApp;
+const canRemember = () => !!(PFAPP && typeof PFAPP.saveToken === 'function');
+let serverIdCache = '';
+async function serverId() {
+  if (!serverIdCache) try { serverIdCache = (await fetch('/api/hello').then(r => r.json())).id || ''; } catch {}
+  return serverIdCache;
+}
+async function autoLogin() {
+  if (!canRemember()) return false;
+  try { if (sessionStorage.getItem('pf-signed-out')) return false; } catch {}
+  const id = await serverId(), token = id && PFAPP.getToken(id);
+  if (!token) return false;
+  const r = await fetch('/api/auth/device-login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PP': '1' }, body: JSON.stringify({ token }) }).catch(() => null);
+  if (r && r.ok) return true;
+  if (r && r.status === 401) PFAPP.clearToken(id); // key was revoked (password changed, or removed in Settings)
+  return false;
+}
+async function rememberThisPhone() {
+  if (!canRemember()) return;
+  try {
+    const name = typeof PFAPP.deviceName === 'function' ? PFAPP.deviceName() : 'Phone';
+    const r = await api('/auth/device', { method: 'POST', body: { name } });
+    PFAPP.saveToken(r.server, r.token); serverIdCache = r.server;
+  } catch {}
+}
+async function signOut() {
+  const id = canRemember() ? await serverId() : '', token = id ? PFAPP.getToken(id) : '';
+  await api('/auth/logout', { method: 'POST', body: token ? { device_token: token } : {} }).catch(() => {});
+  if (token) PFAPP.clearToken(id);
+  try { sessionStorage.setItem('pf-signed-out', '1'); } catch {}
+  showAuth(false);
+}
 function showAuth(setup) {
   $('#shell').classList.add('hidden'); $('#auth').classList.remove('hidden');
+  $('#codeForm').classList.add('hidden'); $('#authForm').classList.remove('hidden');
   if (setup !== undefined) {
     $('#authPw2').classList.toggle('hidden', !setup); $('#authPw2').required = !!setup;
+    $('#authEmail').classList.toggle('hidden', !setup); $('#authLinks').classList.toggle('hidden', !!setup);
     $('#authBtn').textContent = setup ? 'Create password' : 'Sign in';
     $('#authMsg').textContent = setup ? 'Welcome! Create a password to protect your financial data.' : 'Your money, all in one place.';
     $('#authForm').dataset.mode = setup ? 'setup' : 'login';
   }
-  setTimeout(() => $('#authPw').focus(), 50);
+  if (!PFAPP) setTimeout(() => $('#authPw').focus(), 50); // in the phone app, don't pop the keyboard (it would also cover the lock screen)
 }
 $('#authForm').addEventListener('submit', async e => {
   e.preventDefault(); $('#authErr').textContent = '';
   const setup = $('#authForm').dataset.mode === 'setup';
   const pw = $('#authPw').value;
   if (setup && pw !== $('#authPw2').value) { $('#authErr').textContent = "Passwords don't match."; return; }
-  try { await api(setup ? '/auth/setup' : '/auth/login', { method: 'POST', body: { password: pw } }); $('#authPw').value = $('#authPw2').value = ''; start(); }
+  try {
+    await api(setup ? '/auth/setup' : '/auth/login', { method: 'POST', body: setup ? { password: pw, email: $('#authEmail').value.trim() } : { password: pw } }); $('#authPw').value = $('#authPw2').value = '';
+    try { sessionStorage.removeItem('pf-signed-out'); } catch {}
+    await rememberThisPhone(); start();
+  }
   catch (err) { $('#authErr').textContent = err.message; }
+});
+
+// "Forgot password?" and "Email me a sign-in code": email → 6-digit code (→ new password) → signed in
+let codeMode = 'login', codeSent = false;
+function showCodeForm(mode) {
+  codeMode = mode; codeSent = false;
+  $('#authForm').classList.add('hidden'); $('#codeForm').classList.remove('hidden');
+  $('#codeMsg').textContent = mode === 'reset' ? "Enter the email on your account and we'll send a code to set a new password." : "Enter the email on your account and we'll send a code to sign in.";
+  ['#codeNum', '#codePw', '#codePw2'].forEach(x => { $(x).classList.add('hidden'); $(x).value = ''; });
+  $('#codeAgain').hidden = true; $('#codeErr').textContent = ''; $('#codeEmail').disabled = false;
+  $('#codeGo').textContent = 'Email me a code';
+  if (!PFAPP) setTimeout(() => $('#codeEmail').focus(), 50);
+}
+$('#forgotBtn').onclick = () => showCodeForm('reset');
+$('#codeLink').onclick = () => showCodeForm('login');
+$('#codeBack').onclick = () => showAuth(false);
+async function sendCode() {
+  const email = $('#codeEmail').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { $('#codeErr').textContent = 'Enter your email address.'; return false; }
+  await api('/auth/email-code', { method: 'POST', body: { email, purpose: codeMode } });
+  codeSent = true; $('#codeEmail').disabled = true;
+  $('#codeMsg').textContent = `If ${email} is on this PocketFinance, a 6-digit code is on its way. It works for 15 minutes — check spam too.`;
+  $('#codeNum').classList.remove('hidden');
+  if (codeMode === 'reset') { $('#codePw').classList.remove('hidden'); $('#codePw2').classList.remove('hidden'); }
+  $('#codeGo').textContent = codeMode === 'reset' ? 'Set new password' : 'Sign in'; $('#codeAgain').hidden = false;
+  setTimeout(() => $('#codeNum').focus(), 50);
+  return true;
+}
+$('#codeAgain').onclick = async () => { $('#codeErr').textContent = ''; try { await sendCode(); toast('New code sent'); } catch (err) { $('#codeErr').textContent = err.message; } };
+$('#codeForm').addEventListener('submit', async e => {
+  e.preventDefault(); $('#codeErr').textContent = '';
+  const btn = $('#codeGo'); btn.disabled = true;
+  try {
+    if (!codeSent) { await sendCode(); return; }
+    const code = $('#codeNum').value.replace(/\D/g, '');
+    if (code.length !== 6) { $('#codeErr').textContent = 'Enter the 6-digit code from the email.'; return; }
+    const body = { email: $('#codeEmail').value.trim(), code };
+    if (codeMode === 'reset') {
+      if ($('#codePw').value.length < 8) { $('#codeErr').textContent = 'Use at least 8 characters.'; return; }
+      if ($('#codePw').value !== $('#codePw2').value) { $('#codeErr').textContent = "Passwords don't match."; return; }
+      body.password = $('#codePw').value;
+    }
+    await api('/auth/email-login', { method: 'POST', body });
+    try { sessionStorage.removeItem('pf-signed-out'); } catch {}
+    if (codeMode === 'reset') toast('Password changed — you are signed in');
+    await rememberThisPhone(); start();
+  } catch (err) { $('#codeErr').textContent = err.message; }
+  finally { btn.disabled = false; }
 });
 
 // ---------- router ----------
@@ -181,7 +271,8 @@ function setWhoChip() {
 }
 
 async function start() {
-  const s = await fetch('/api/auth/status').then(r => r.json());
+  let s = await fetch('/api/auth/status').then(r => r.json());
+  if (!s.authed && s.setup && await autoLogin()) s = await fetch('/api/auth/status').then(r => r.json());
   if (!s.authed) return showAuth(!s.setup);
   STATE.user = s.user || { role: 'owner' };
   setWhoChip();

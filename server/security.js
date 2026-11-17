@@ -39,7 +39,8 @@ const isSetUp = () => !!getSetting('auth_hash');
 function setPassword(pw) { setSetting('auth_hash', hashPassword(pw)); }
 
 // ---- sessions ----
-const SESSION_DAYS = 30;
+// Sessions last 90 days and renew themselves while used, so you stay signed in.
+const SESSION_DAYS = 90;
 const COOKIE = 'pp_sid';
 function createSession(res, memberId = null) {
   const id = crypto.randomBytes(32).toString('hex');
@@ -57,11 +58,46 @@ function sessionUser(req) {
   if (!id) return null;
   const s = db.prepare('SELECT s.expires, s.member_id, m.name, m.role FROM sessions s LEFT JOIN members m ON m.id=s.member_id WHERE s.id=?').get(id);
   if (!s || s.expires <= Date.now()) return null;
-  if (s.member_id == null) return { role: 'owner', name: getSetting('owner_name', '') || 'Owner', memberId: null };
+  if (s.member_id == null) return { role: 'owner', name: getSetting('owner_name', '') || 'Owner', memberId: null, expires: s.expires };
   if (!s.role) return null; // member was removed
-  return { role: s.role === 'full' ? 'full' : 'view', name: s.name, memberId: s.member_id };
+  return { role: s.role === 'full' ? 'full' : 'view', name: s.name, memberId: s.member_id, expires: s.expires };
 }
 const sessionValid = req => !!sessionUser(req);
+// push the expiry out again (at most once a day per session)
+function renewSession(req, res, user) {
+  if (user.expires - Date.now() > (SESSION_DAYS - 1) * 864e5) return;
+  const id = readCookie(req); if (!id) return;
+  db.prepare('UPDATE sessions SET expires=? WHERE id=?').run(Date.now() + SESSION_DAYS * 864e5, id);
+  res.setHeader('Set-Cookie', `${COOKIE}=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DAYS * 86400}`);
+}
+
+// ---- remembered phones: the PocketFinance app keeps a device key and signs itself in ----
+db.exec(`CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, member_id INTEGER, name TEXT, created INTEGER, last_used INTEGER)`);
+const sha256 = t => crypto.createHash('sha256').update(String(t)).digest('hex');
+// random id for this server, so the app can keep one key per server whichever address (Wi-Fi or Tailscale) it uses
+function installId() {
+  let id = getSetting('install_id');
+  if (!id) { id = crypto.randomBytes(12).toString('hex'); setSetting('install_id', id); }
+  return id;
+}
+function rememberDevice(user, name) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO devices(token_hash,member_id,name,created,last_used) VALUES(?,?,?,?,?)')
+    .run(sha256(token), user.memberId ?? null, String(name || 'Phone').trim().slice(0, 40) || 'Phone', Date.now(), Date.now());
+  return { token, server: installId() };
+}
+function deviceLogin(res, token) {
+  if (!/^[a-f0-9]{64}$/.test(String(token || ''))) return false;
+  const d = db.prepare('SELECT d.id, d.member_id, m.id mid FROM devices d LEFT JOIN members m ON m.id=d.member_id WHERE d.token_hash=?').get(sha256(token));
+  if (!d) return false;
+  if (d.member_id != null && d.mid == null) { db.prepare('DELETE FROM devices WHERE id=?').run(d.id); return false; } // member was removed
+  db.prepare('UPDATE devices SET last_used=? WHERE id=?').run(Date.now(), d.id);
+  createSession(res, d.member_id);
+  return true;
+}
+const forgetDeviceToken = token => { if (token) db.prepare('DELETE FROM devices WHERE token_hash=?').run(sha256(token)); };
+const listDevices = () => db.prepare('SELECT d.id, d.name, d.created, d.last_used, d.member_id, m.name member FROM devices d LEFT JOIN members m ON m.id=d.member_id ORDER BY d.last_used DESC').all();
+const removeDevice = id => { db.prepare('DELETE FROM devices WHERE id=?').run(id); };
 
 // ---- household members ----
 const MAX_MEMBERS = 5;
@@ -73,7 +109,7 @@ function checkLogin(pw) {
   }
   return null;
 }
-const listMembers = () => db.prepare('SELECT id, name, role, created, last_login FROM members ORDER BY id').all();
+const listMembers = () => db.prepare('SELECT * FROM members ORDER BY id').all().map(({ hash, ...m }) => m);
 function passwordInUse(pw, exceptId) {
   if (checkPassword(pw, getSetting('auth_hash'))) return true;
   return db.prepare('SELECT id, hash FROM members').all().some(m => m.id !== exceptId && checkPassword(pw, m.hash));
@@ -95,10 +131,11 @@ function updateMember(id, { name, role, password }) {
   let hash = m.hash;
   if (password) { if (String(password).length < 8) throw bad('At least 8 characters.'); if (passwordInUse(String(password), m.id)) throw bad('That password is already in use.'); hash = hashPassword(String(password)); }
   db.prepare('UPDATE members SET name=?, role=?, hash=? WHERE id=?').run(String(name ?? m.name).trim().slice(0, 40) || m.name, role ? (role === 'full' ? 'full' : 'view') : m.role, hash, m.id);
-  if (password || (role && role !== m.role)) db.prepare('DELETE FROM sessions WHERE member_id=?').run(m.id); // sign them out everywhere
+  if (password || (role && role !== m.role)) { db.prepare('DELETE FROM sessions WHERE member_id=?').run(m.id); db.prepare('DELETE FROM devices WHERE member_id=?').run(m.id); } // sign them out everywhere
 }
 function removeMember(id) {
   db.prepare('DELETE FROM sessions WHERE member_id=?').run(id);
+  db.prepare('DELETE FROM devices WHERE member_id=?').run(id);
   db.prepare('DELETE FROM members WHERE id=?').run(id);
 }
 function destroySession(req, res) {
@@ -106,7 +143,8 @@ function destroySession(req, res) {
   if (id) db.prepare('DELETE FROM sessions WHERE id=?').run(id);
   res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
 }
-function destroyAllSessions() { db.prepare('DELETE FROM sessions').run(); }
+// new owner password: everyone (and every remembered phone) signs in again
+function destroyAllSessions() { db.prepare('DELETE FROM sessions').run(); db.prepare('DELETE FROM devices').run(); }
 
 // simple login throttle
 const fails = new Map();
@@ -122,13 +160,14 @@ function noteFail(ip) {
 const clearFails = ip => fails.delete(ip);
 
 // POSTs that only read or ask something, allowed for view-only members
-const VIEW_POST_OK = new Set(['/api/auth/logout', '/api/ai/ask', '/api/ai/insights', '/api/plans/retire/preview', '/api/rules/test']);
+const VIEW_POST_OK = new Set(['/api/auth/logout', '/api/auth/device', '/api/ai/ask', '/api/ai/insights', '/api/plans/retire/preview', '/api/rules/test']);
 function requireAuth(req, res, next) {
   const user = sessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
   // Mutating requests must carry a custom header (blocks cross-site form posts).
   if (req.method !== 'GET' && req.headers['x-pp'] !== '1') return res.status(403).json({ error: 'Missing request header' });
   req.user = user;
+  renewSession(req, res, user);
   if (user.role === 'view' && req.method !== 'GET' && !VIEW_POST_OK.has(req.originalUrl.split('?')[0])) return res.status(403).json({ error: 'You have view-only access. Ask the owner if you need to make changes.', code: 'VIEW_ONLY' });
   next();
 }
@@ -147,6 +186,6 @@ function calendarToken() {
 
 module.exports = {
   encrypt, decrypt, isSetUp, setPassword, checkPassword, createSession, sessionValid,
-  destroySession, destroyAllSessions, throttled, noteFail, clearFails, requireAuth, ownerOnly, calendarToken,
+  passwordInUse, destroySession, destroyAllSessions, installId, rememberDevice, deviceLogin, forgetDeviceToken, listDevices, removeDevice, throttled, noteFail, clearFails, requireAuth, ownerOnly, calendarToken,
   sessionUser, checkLogin, listMembers, addMember, updateMember, removeMember,
 };
