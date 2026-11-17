@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PocketFinance</title>
+<meta name="theme-color" content="#4f46e5">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="auth" class="auth hidden">
+  <form id="authForm" class="auth-card">
+    <div class="brand big"><img src="/icon.svg" alt=""><span>PocketFinance</span></div>
+    <p id="authMsg" class="muted">Your money, all in one place.</p>
+    <input id="authPw" type="password" autocomplete="current-password" placeholder="Password" required minlength="8">
+    <input id="authPw2" type="password" autocomplete="new-password" placeholder="Confirm password" class="hidden" minlength="8">
+    <button class="btn primary" type="submit" id="authBtn">Sign in</button>
+    <p class="err" id="authErr"></p>
+  </form>
+</div>
+
+<div id="shell" class="shell hidden">
+  <aside class="side">
+    <div class="brand"><img src="/icon.svg" alt=""><span>PocketFinance</span></div>
+    <nav id="nav">
+      <a href="#/dashboard" data-r="dashboard"><i>🏠</i><span>Dashboard</span></a>
+      <a href="#/advisor" data-r="advisor"><i>✨</i><span>AI Advisor</span></a>
+      <a href="#/accounts" data-r="accounts"><i>🏦</i><span>Accounts</span></a>
+      <a href="#/transactions" data-r="transactions"><i>🧾</i><span>Transactions</span></a>
+      <a href="#/review" data-r="review"><i>📥</i><span>Review</span></a>
+      <a href="#/recurring" data-r="recurring"><i>🔄</i><span>Recurring</span></a>
+      <a href="#/budgets" data-r="budgets"><i>🎯</i><span>Budgets</span></a>
+      <a href="#/watch" data-r="watch"><i>👀</i><span>Watchlists</span></a>
+      <a href="#/spending" data-r="spending"><i>📊</i><span>Spending</span></a>
+      <a href="#/reports" data-r="reports"><i>📑</i><span>Reports</span></a>
+      <a href="#/networth" data-r="networth"><i>📈</i><span>Net worth</span></a>
+      <a href="#/invest" data-r="invest"><i>💹</i><span>Investments</span></a>
+      <a href="#/goals" data-r="goals"><i>🏁</i><span>Savings goals</span></a>
+      <a href="#/family" data-r="family"><i>👨‍👩‍👧</i><span>Family</span></a>
+      <a href="#/owed" data-r="owed"><i>👥</i><span>Split &amp; IOUs</span></a>
+      <a href="#/debt" data-r="debt"><i>🧮</i><span>Debt payoff</span></a>
+      <a href="#/retire" data-r="retire"><i>🏖️</i><span>Retirement</span></a>
+      <a href="#/leaks" data-r="leaks"><i>🕳️</i><span>Money leaks</span></a>
+      <a href="#/negotiate" data-r="negotiate"><i>🤝</i><span>Lower my bills</span></a>
+      <a href="#/credit" data-r="credit"><i>💳</i><span>Credit score</span></a>
+      <a href="#/settings" data-r="settings"><i>⚙️</i><span>Settings</span></a>
+    </nav>
+  </aside>
+  <main>
+    <header class="top">
+      <button class="icon-btn menu" id="menuBtn" aria-label="Menu">☰</button>
+      <h1 id="title">Dashboard</h1>
+      <div class="top-actions"><span id="whoChip" class="pill hidden"></span>
+        <button class="icon-btn" id="searchBtn" title="Search (Ctrl+K)" aria-label="Search">🔍</button>
+        <button class="icon-btn" id="shareBtn" title="Share this page" aria-label="Share this page">📤</button>
+        <button class="icon-btn" id="syncBtn" title="Sync all accounts">⟳</button>
+        <button class="icon-btn" id="bellBtn" title="Alerts">🔔<b id="bellCount" class="hidden"></b></button>
+      </div>
+    </header>
+    <section id="view" class="view"></section>
+  </main>
+  <nav class="tabbar">
+    <a href="#/dashboard" data-r="dashboard"><i>🏠</i>Home</a>
+    <a href="#/transactions" data-r="transactions"><i>🧾</i>Activity</a>
+    <a href="#/recurring" data-r="recurring"><i>🔄</i>Recurring</a>
+    <a href="#/budgets" data-r="budgets"><i>🎯</i>Budgets</a>
+    <a href="#/more" data-r="more"><i>☰</i>More</a>
+  </nav>
+</div>
+
+<div id="drawer" class="drawer hidden"><div class="drawer-bg"></div><div class="drawer-panel" role="dialog"><button class="icon-btn close" data-close>✕</button><div id="drawerBody"></div></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/vendor/chart.js"></script>
+<script src="/core.js"></script>
+<script src="/views-a.js"></script>
+<script src="/views-c.js"></script>
+<script src="/banks.js"></script>
+<script src="/views-d.js"></script>
+<script src="/views-e.js"></script>
+<script src="/views-homes.js"></script>
+<script src="/share.js"></script>
+<script src="/views-cancel.js"></script>
+<script src="/views-connect.js"></script>
+<script src="/views-f.js"></script>
+<script src="/views-family.js"></script>
+<script src="/views-b.js"></script>
+</body>
+</html>
