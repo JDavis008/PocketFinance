@@ -20,5 +20,10 @@
   "android": {
     "backgroundColor": "#090a12",
     "allowMixedContent": true
+  },
+  "ios": {
+    "backgroundColor": "#090a12",
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false
   }
 }

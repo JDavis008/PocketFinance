@@ -4,12 +4,15 @@
   "private": true,
   "description": "Android shell for PocketFinance",
   "scripts": {
-    "sync": "node make-icons.js && npx cap sync android"
+    "sync": "node make-icons.js && npx cap sync",
+    "sync:android": "node make-icons.js && npx cap sync android",
+    "sync:ios": "node make-icons.js && npx cap sync ios"
   },
   "dependencies": {
     "@capacitor/android": "6.2.0",
     "@capacitor/cli": "6.2.0",
-    "@capacitor/core": "6.2.0"
+    "@capacitor/core": "6.2.0",
+    "@capacitor/ios": "^6.2.0"
   },
   "devDependencies": {
     "sharp": "0.33.5"

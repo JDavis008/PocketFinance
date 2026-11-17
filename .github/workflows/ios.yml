@@ -1,0 +1,54 @@
+# Builds the iOS app on a GitHub macOS runner (no Mac needed at home).
+# Output: an unsigned PocketFinance.ipa artifact. Install it with Sideloadly or AltStore, which sign it with your own Apple ID,
+# or open mobile/ios/App/App.xcworkspace in Xcode on a Mac and run it on your iPhone.
+name: iOS app
+
+on:
+  push:
+    branches: [main]
+    paths: ['mobile/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Capacitor
+        working-directory: mobile
+        run: npm ci --no-audit --no-fund
+
+      - name: Copy the launcher into the iOS project and install pods
+        working-directory: mobile
+        run: npx cap sync ios
+
+      - name: Build for the iOS Simulator (compile check)
+        working-directory: mobile/ios/App
+        run: >
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO build | tail -n 30; exit ${PIPESTATUS[0]}
+
+      - name: Build an unsigned iPhone app (.ipa)
+        working-directory: mobile/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -n 30
+          rm -rf Payload && mkdir Payload
+          cp -R build-device/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry PocketFinance.ipa Payload
+          ls -la PocketFinance.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketFinance-iOS-unsigned
+          path: mobile/ios/App/PocketFinance.ipa
+          if-no-files-found: error

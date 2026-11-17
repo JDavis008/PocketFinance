@@ -514,3 +514,9 @@ a.card.kpi:active, a.card.ai-card:active, a.hero:active { transform: translateY(
 @media (max-width: 900px) { .grid.kids { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .jars { gap: 7px; } .jar-v { font-size: 15px; } .kid-total { font-size: 20px; } .kid-acts .btn.sm { padding: 6px 9px; } }
 .month-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; } .month-nav strong { flex: 1; text-align: center; font-size: 16px; } .month-nav .btn { width: 40px; padding-left: 0; padding-right: 0; }
+
+/* iPhone: keep the top bar and slide-out menu below the notch / Dynamic Island (env() is 0 everywhere else) */
+@media (max-width: 820px) {
+  .top { padding-top: max(10px, calc(6px + env(safe-area-inset-top))); }
+  .side { padding-top: env(safe-area-inset-top); }
+}
